@@ -272,3 +272,32 @@ int check_filetype(int fd, struct stat *sb, const char *filename)
 
 	return 0;
 }
+
+int parse_key_desc(const char *full_desc, int *type, const char **desc)
+{
+	static const char * const PREFIXES[] = {
+		"logon:",	/* KCAPI_KEYRING_LOGON */
+		"user:",	/* KCAPI_KEYRING_USER */
+		"trusted:",	/* KCAPI_KEYRING_TRUSTED */
+		"encrypted:",	/* KCAPI_KEYRING_ENCRYPTED */
+		NULL
+	};
+
+	*type = 0;
+	*desc = NULL;
+
+	while (PREFIXES[*type] != NULL) {
+		const char *prefix = PREFIXES[*type];
+		if (strncmp(full_desc, prefix, strlen(prefix)) == 0) {
+			*desc = full_desc + strlen(prefix);
+			break;
+		}
+		++*type;
+	}
+	if (!*desc) {
+		dolog(KCAPI_LOG_ERR,
+		      "invalid keyring key descriptor: %s", full_desc);
+		return -EINVAL;
+	}
+	return 0;
+}

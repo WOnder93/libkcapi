@@ -598,6 +598,43 @@ int _kcapi_common_setkey(struct kcapi_handle *handle,
 	return ret;
 }
 
+int _kcapi_common_setkey_keyring(struct kcapi_handle *handle,
+				 int type, const char *desc)
+{
+	struct kcapi_handle_tfm *tfm = handle->tfm;
+	int ret;
+	int optname;
+
+	switch (type) {
+	case KCAPI_KEYRING_LOGON:
+		optname = ALG_SET_KEY_KEYRING_LOGON;
+		break;
+	case KCAPI_KEYRING_USER:
+		optname = ALG_SET_KEY_KEYRING_USER;
+		break;
+	case KCAPI_KEYRING_TRUSTED:
+		optname = ALG_SET_KEY_KEYRING_TRUSTED;
+		break;
+	case KCAPI_KEYRING_ENCRYPTED:
+		optname = ALG_SET_KEY_KEYRING_ENCRYPTED;
+		break;
+	default:
+		kcapi_dolog(KCAPI_LOG_ERR,
+			    "_kcapi_common_setkey_keyring: invalid key type %d",
+			    type);
+		return -EINVAL;
+	}
+
+	ret = setsockopt(tfm->tfmfd, SOL_ALG, optname, desc, strlen(desc));
+	if (ret < 0)
+		ret = -errno;
+	kcapi_dolog(KCAPI_LOG_DEBUG,
+		    "AF_ALG setkey_keyring: setsockopt syscall returned %d",
+		    ret);
+
+	return ret;
+}
+
 static int __kcapi_common_getinfo(struct kcapi_handle *handle,
 				  const char *ciphername,
 				  int drivername)

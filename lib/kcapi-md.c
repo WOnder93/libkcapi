@@ -41,6 +41,13 @@ int kcapi_md_setkey(struct kcapi_handle *handle,
 	return _kcapi_common_setkey(handle, key, keylen);
 }
 
+DSO_PUBLIC
+int kcapi_md_setkey_keyring(struct kcapi_handle *handle,
+			    int type, const char *desc)
+{
+	return _kcapi_common_setkey_keyring(handle, type, desc);
+}
+
 static inline int32_t _kcapi_md_update(struct kcapi_handle *handle,
 				       const uint8_t *buffer, uint32_t len)
 {

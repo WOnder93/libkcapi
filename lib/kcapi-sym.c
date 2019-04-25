@@ -42,6 +42,13 @@ int kcapi_cipher_setkey(struct kcapi_handle *handle,
 }
 
 DSO_PUBLIC
+int kcapi_cipher_setkey_keyring(struct kcapi_handle *handle,
+				int type, const char *desc)
+{
+	return _kcapi_common_setkey_keyring(handle, type, desc);
+}
+
+DSO_PUBLIC
 int32_t kcapi_cipher_encrypt(struct kcapi_handle *handle,
 			     const uint8_t *in, uint32_t inlen,
 			     const uint8_t *iv,

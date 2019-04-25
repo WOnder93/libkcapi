@@ -60,6 +60,18 @@ extern "C"
 #ifndef ALG_SET_ECDH_CURVE
 #define ALG_SET_ECDH_CURVE		8
 #endif
+#ifndef ALG_SET_KEY_KEYRING_LOGON
+#define ALG_SET_KEY_KEYRING_LOGON	9
+#endif
+#ifndef ALG_SET_KEY_KEYRING_USER
+#define ALG_SET_KEY_KEYRING_USER	10
+#endif
+#ifndef ALG_SET_KEY_KEYRING_TRUSTED
+#define ALG_SET_KEY_KEYRING_TRUSTED	11
+#endif
+#ifndef ALG_SET_KEY_KEYRING_ENCRYPTED
+#define ALG_SET_KEY_KEYRING_ENCRYPTED	12
+#endif
 
 
 #ifndef ALG_OP_SIGN
@@ -288,6 +300,8 @@ int _kcapi_handle_init(struct kcapi_handle **caller, const char *type,
 void _kcapi_handle_destroy(struct kcapi_handle *handle);
 int _kcapi_common_setkey(struct kcapi_handle *handle, const uint8_t *key,
 			 uint32_t keylen);
+int _kcapi_common_setkey_keyring(struct kcapi_handle *handle,
+				 int type, const char *desc);
 int32_t _kcapi_cipher_crypt(struct kcapi_handle *handle, const uint8_t *in,
 			    uint32_t inlen, uint8_t *out, uint32_t outlen,
 			    int access, int enc);

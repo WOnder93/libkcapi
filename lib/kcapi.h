@@ -45,6 +45,11 @@ extern "C"
 #define KCAPI_ACCESS_VMSPLICE  	0x1
 #define KCAPI_ACCESS_SENDMSG   	0x2
 
+#define KCAPI_KEYRING_LOGON	0
+#define KCAPI_KEYRING_USER	1
+#define KCAPI_KEYRING_TRUSTED	2
+#define KCAPI_KEYRING_ENCRYPTED	3
+
 /*
  * Flags for initializing a cipher handle
  * 
@@ -153,6 +158,26 @@ void kcapi_cipher_destroy(struct kcapi_handle *handle);
  */
 int kcapi_cipher_setkey(struct kcapi_handle *handle,
 			const uint8_t *key, uint32_t keylen);
+
+/**
+ * kcapi_cipher_setkey_keyring() - set the key for the cipher handle (from
+ * keyring)
+ *
+ * @handle: [in] cipher handle
+ * @type: [in] key type (one of KCAPI_KEYRING_*)
+ * @desc: [in] key decriptor
+ *
+ * With this function, the caller sets the keyring reference for subsequent
+ * encryption or decryption operations.
+ *
+ * @return 0 upon success (in case of an akcipher handle, a positive integer
+ *	   is returned that denominates the maximum output size of the
+ *	   cryptographic operation -- this value must be used as the size
+ *	   of the output buffer for one cryptographic operation);
+ *	   a negative errno-style error code if an error occurred
+ */
+int kcapi_cipher_setkey_keyring(struct kcapi_handle *handle,
+				int type, const char *desc);
 
 /**
  * kcapi_cipher_encrypt() - encrypt data (synchronous one shot)
@@ -634,6 +659,23 @@ void kcapi_aead_destroy(struct kcapi_handle *handle);
  */
 int kcapi_aead_setkey(struct kcapi_handle *handle,
 		      const uint8_t *key, uint32_t keylen);
+
+/**
+ * kcapi_aead_setkey_keyring() - set the key for the cipher handle (from
+ * keyring)
+ *
+ * @handle: [in] cipher handle
+ * @type: [in] key type (one of KCAPI_KEYRING_*)
+ * @desc: [in] key decriptor
+ *
+ * With this function, the caller sets the keyring reference for subsequent
+ * encryption or decryption operations.
+ *
+ * @return 0 upon success;
+ *	   a negative errno-style error code if an error occurred
+ */
+int kcapi_aead_setkey_keyring(struct kcapi_handle *handle,
+			      int type, const char *desc);
 
 /**
  * kcapi_aead_settaglen() - set authentication tag size
@@ -1226,6 +1268,23 @@ void kcapi_md_destroy(struct kcapi_handle *handle);
  */
 int kcapi_md_setkey(struct kcapi_handle *handle,
 		    const uint8_t *key, uint32_t keylen);
+
+/**
+ * kcapi_md_setkey_keyring() - set the key for the cipher handle (from
+ * keyring)
+ *
+ * @handle: [in] cipher handle
+ * @type: [in] key type (one of KCAPI_KEYRING_*)
+ * @desc: [in] key decriptor
+ *
+ * With this function, the caller sets the keyring reference for subsequent
+ * hashing operations. This call is applicable for keyed message digests.
+ *
+ * @return 0 upon success;
+ *	   a negative errno-style error code if an error occurred
+ */
+int kcapi_md_setkey_keyring(struct kcapi_handle *handle,
+			    int type, const char *desc);
 
 /**
  * kcapi_md_update() - message digest update function (stream)

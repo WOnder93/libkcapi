@@ -145,3 +145,10 @@ LIBKCAPI_1.1.3 {
 
 LIBKCAPI_1.1.4 {
 } LIBKCAPI_1.1.3;
+
+LIBKCAPI_1.2.0 {
+	global:
+	kcapi_cipher_setkey_keyring;
+	kcapi_aead_setkey_keyring;
+	kcapi_md_setkey_keyring;
+} LIBKCAPI_1.1.4;

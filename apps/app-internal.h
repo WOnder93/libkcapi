@@ -55,6 +55,7 @@ void bin2print(const uint8_t *bin, uint32_t binlen,
 	       const char *filename, FILE *outfile, uint32_t lfcr);
 int read_complete(int fd, uint8_t *buf, uint32_t buflen);
 int check_filetype(int fd, struct stat *sb, const char *filename);
+int parse_key_desc(const char *full_desc, int *type, const char **desc);
 
 #ifdef __cplusplus
 }

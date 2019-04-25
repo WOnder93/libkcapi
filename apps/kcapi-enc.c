@@ -44,6 +44,7 @@ struct opt_data {
 	const char *aad;
 	const char *tag;
 	const char *passwd;
+	const char *key_desc;
 	const char *salt;
 	const char *pbkdf_hash;
 	int password_fd;
@@ -59,6 +60,8 @@ struct opt_data {
 	void (*func_destroy)(struct kcapi_handle *handle);
 	int (*func_setkey)(struct kcapi_handle *handle,
 			   const uint8_t *key, uint32_t keylen);
+	int (*func_setkey_keyring)(struct kcapi_handle *handle,
+				   int type, const char *desc);
 	int32_t (*func_stream_init_enc)(struct kcapi_handle *handle,
 					const uint8_t *iv,
 					struct iovec *iov, uint32_t iovlen);
@@ -708,6 +711,18 @@ static int set_key(struct kcapi_handle *handle, struct opt_data *opts)
 	const uint8_t *passwdptr = NULL;
 	int ret;
 
+	/* Keyring descriptor provided, use it */
+	if (opts->key_desc) {
+		int key_type;
+		const char *desc;
+
+		ret = parse_key_desc(opts->key_desc, &key_type, &desc);
+		if (ret)
+			return ret;
+
+		return opts->func_setkey_keyring(handle, key_type, desc);
+	}
+
 	/* Get password from command line */
 	if (opts->passwd) {
 		passwdptr = (uint8_t *)opts->passwd;
@@ -863,6 +878,8 @@ static void usage(void)
 	fprintf(stderr, "\t   --pbkdfiter <NUM>\tNumber of PBKDF2 iterations\n");
 	fprintf(stderr, "\t   --pbkdfmac <MAC>\tMac for PBKDF2 (default: hmac(sha256))\n");
 	fprintf(stderr, "\t   --keyfd <FD>\t\tKey file descriptor providing password\n");
+	fprintf(stderr, "\t   --keydesc <TYPE:DESC>\n");
+	fprintf(stderr, "\t\t\t\tKeyring key descriptor\n");
 	fprintf(stderr, "\t   --nounpad\t\tDo not unpad output file\n");
 	fprintf(stderr, "\t-h --help\t\tThis help information\n");
 	fprintf(stderr, "\t   --version\t\tPrint version\n");
@@ -905,6 +922,7 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 			{"pbkdfiter",	required_argument,	0, 0},
 			{"pbkdfmac",	required_argument,	0, 0},
 			{"keyfd",	required_argument,	0, 0},
+			{"keydesc",	required_argument,	0, 0},
 			{"nounpad",	no_argument,		0, 0},
 
 			{"verbose",	no_argument,		0, 'v'},
@@ -993,19 +1011,22 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 				opts->key_fd = (int)val;
 				break;
 			case 16:
+				opts->key_desc = optarg;
+				break;
+			case 17:
 				opts->nounpad = true;
 				break;
 
-			case 17:
+			case 18:
 				verbosity++;
 				break;
-			case 18:
+			case 19:
 				verbosity = KCAPI_LOG_NONE;
 				break;
-			case 19:
+			case 20:
 				usage();
 				break;
-			case 20:
+			case 21:
 				memset(version, 0, sizeof(version));
 				kcapi_versionstring(version, sizeof(version));
 				fprintf(stderr, "Version %s\n", version);
@@ -1060,9 +1081,9 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 	}
 
 	if (!opts->passwd && opts->password_fd == -1 &&
-	    opts->key_fd == -1) {
+	    opts->key_fd == -1 && !opts->key_desc) {
 		dolog(KCAPI_LOG_ERR,
-		      "Provide at least a password, a password FD or key FD");
+		      "Provide at least a password, a password FD. key FD, or keyring key descriptor");
 		usage();
 	}
 
@@ -1105,6 +1126,7 @@ int main(int argc, char *argv[])
 		opts.func_init = kcapi_aead_init;
 		opts.func_destroy = kcapi_aead_destroy;
 		opts.func_setkey = kcapi_aead_setkey;
+		opts.func_setkey_keyring = kcapi_aead_setkey_keyring;
 		opts.func_stream_init_enc = kcapi_aead_stream_init_enc;
 		opts.func_stream_init_dec = kcapi_aead_stream_init_dec;
 		opts.func_stream_update = kcapi_aead_stream_update;
@@ -1114,6 +1136,7 @@ int main(int argc, char *argv[])
 		opts.func_init = kcapi_cipher_init;
 		opts.func_destroy = kcapi_cipher_destroy;
 		opts.func_setkey = kcapi_cipher_setkey;
+		opts.func_setkey_keyring = kcapi_cipher_setkey_keyring;
 		opts.func_stream_init_enc = kcapi_cipher_stream_init_enc;
 		opts.func_stream_init_dec = kcapi_cipher_stream_init_dec;
 		opts.func_stream_update = kcapi_cipher_stream_update;

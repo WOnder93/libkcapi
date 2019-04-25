@@ -40,6 +40,7 @@ struct opt_data {
 	const char *passwd;
 	const char *salt;
 	const char *pbkdf_hash;
+	const char *key_desc;
 	int password_fd;
 	int key_fd;
 	uint32_t pbkdf_iterations;
@@ -225,6 +226,18 @@ static int set_key(struct kcapi_handle *handle, struct opt_data *opts)
 	if (!opts->keyed_md)
 		return 0;
 
+	/* Keyring descriptor provided, use it */
+	if (opts->key_desc) {
+		int key_type;
+		const char *desc;
+
+		ret = parse_key_desc(opts->key_desc, &key_type, &desc);
+		if (ret)
+			return ret;
+
+		return kcapi_md_setkey_keyring(handle, key_type, desc);
+	}
+
 	/* Get password from command line */
 	if (opts->passwd) {
 		passwdptr = (uint8_t *)opts->passwd;
@@ -365,6 +378,8 @@ static void usage(void)
 	fprintf(stderr, "\t   --pbkdfiter <NUM>\tNumber of PBKDF2 iterations\n");
 	fprintf(stderr, "\t   --pbkdfmac <MAC>\tMac for PBKDF2 (default: hmac(sha256))\n");
 	fprintf(stderr, "\t   --keyfd <FD>\t\tKey file descriptor providing password\n");
+	fprintf(stderr, "\t   --keydesc <TYPE:DESC>\n");
+	fprintf(stderr, "\t\t\t\tKeyring key descriptor\n");
 	fprintf(stderr, "\t   --hex\t\tDigest is returned in hexadecimal notation\n");
 	fprintf(stderr, "\t-h --help\t\tThis help information\n");
 	fprintf(stderr, "\t   --version\t\tPrint version\n");
@@ -400,6 +415,7 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 			{"pbkdfiter",	required_argument,	0, 0},
 			{"pbkdfmac",	required_argument,	0, 0},
 			{"keyfd",	required_argument,	0, 0},
+			{"keydesc",	required_argument,	0, 0},
 			{"hex",		no_argument,		0, 0},
 
 			{"verbose",	no_argument,		0, 'v'},
@@ -461,19 +477,22 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 				opts->key_fd = (int)val;
 				break;
 			case 9:
+				opts->key_desc = optarg;
+				break;
+			case 10:
 				opts->hexout = true;
 				break;
 
-			case 10:
+			case 11:
 				verbosity++;
 				break;
-			case 11:
+			case 12:
 				verbosity = KCAPI_LOG_NONE;
 				break;
-			case 12:
+			case 13:
 				usage();
 				break;
-			case 13:
+			case 14:
 				memset(version, 0, sizeof(version));
 				kcapi_versionstring(version, sizeof(version));
 				fprintf(stderr, "Version %s\n", version);
@@ -522,7 +541,8 @@ static void parse_opts(int argc, char *argv[], struct opt_data *opts)
 		usage();
 	}
 
-	if (opts->passwd || opts->password_fd != -1 || opts->key_fd != -1)
+	if (opts->passwd || opts->password_fd != -1 || opts->key_fd != -1 ||
+	    opts->key_desc)
 		opts->keyed_md = true;
 
 	if (opts->passwd)

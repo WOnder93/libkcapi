@@ -42,6 +42,13 @@ int kcapi_aead_setkey(struct kcapi_handle *handle,
 }
 
 DSO_PUBLIC
+int kcapi_aead_setkey_keyring(struct kcapi_handle *handle,
+			      int type, const char *desc)
+{
+	return _kcapi_common_setkey_keyring(handle, type, desc);
+}
+
+DSO_PUBLIC
 int kcapi_aead_settaglen(struct kcapi_handle *handle, uint32_t taglen)
 {
 	struct kcapi_handle_tfm *tfm = handle->tfm;
