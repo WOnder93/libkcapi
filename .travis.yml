@@ -30,6 +30,7 @@ addons:
             - xmlto
             - docbook-utils
             - gcc-8
+            - keyutils
 
 install:
     # We need a recent cppcheck because the one shipped with trusty has bugs:

@@ -33,6 +33,13 @@ GENDGST="${TSTPREFIX}generated_dgst"
 
 SALT="0123456789abcdef0123456789abcdef"
 
+# Keyring
+TEST_KEYRING_NAME="kcapi:libkcapi_test_keyring"
+TEST_KEYRING=""
+
+KEYDESC_128="${TEST_KEYRING_NAME}_dgst128"
+KEYDESC_256="${TEST_KEYRING_NAME}_dgst256"
+
 echo_pass_local()
 {
 	local bytes=$(stat -c %s $ORIGPT)
@@ -45,9 +52,40 @@ echo_fail_local()
 	echo_fail "$bytes bytes: $@"
 }
 
+load_key()
+{
+	local type="$1"; shift
+	local desc="$1"; shift
+	local key
+
+	key=$(keyctl padd "$type" "${desc}_$type" "$TEST_KEYRING") || return 1
+	keyctl setperm $key 0x3f000000 || return 1
+}
+
+test_and_prepare_keyring()
+{
+	keyctl list "@s" > /dev/null || return 1
+	TEST_KEYRING="$(keyctl newring "$TEST_KEYRING_NAME" "@u" 2> /dev/null)"
+	test -n "$TEST_KEYRING" || return 1
+	keyctl search "@s" keyring "$TEST_KEYRING" > /dev/null 2>&1 || \
+		keyctl link "@u" "@s" > /dev/null 2>&1
+
+	for key_type in logon user; do
+		load_key $key_type "$KEYDESC_128" <"$KEYFILE_128" || return 1
+		load_key $key_type "$KEYDESC_256" <"$KEYFILE_256" || return 1
+	done
+}
+
+cleanup()
+{
+	rm -f $TSTPREFIX*
+	# unlink whole test keyring
+	[ -n "$TEST_KEYRING" ] && keyctl unlink "$TEST_KEYRING" "@u" >/dev/null
+}
+
 init_setup()
 {
-	trap "rm -f $TSTPREFIX*; exit" 0 1 2 3 15
+	trap "cleanup; exit" 0 1 2 3 15
 
 	# CR is also character
 	# Hex key string: 3031323334353637383961626364650a
@@ -56,6 +94,10 @@ init_setup()
 	# Hex key string: 303132333435363738396162636465663031323334353637383961626364650a
 	echo -n "0123456789abcdef0123456789abcdef" > $KEYFILE_256
 	OPENSSLKEY256="0123456789abcdef0123456789abcdef"
+
+	if ! test_and_prepare_keyring; then
+		echo_deact "Keyring tests (not supported)"
+	fi
 }
 
 gen_orig()
@@ -81,9 +123,12 @@ diff_file()
 
 }
 
-test_stdin_stdout()
+test_common()
 {
-	local keyfile=$1
+	local keyfile="$1"; shift
+	local name="$1"; shift
+	local op_in="$1"; shift
+	local op_out="$1"; shift
 
 	if [ ! -f "$keyfile" ]
 	then
@@ -91,116 +136,60 @@ test_stdin_stdout()
 		exit 1
 	fi
 
-	run_app kcapi-dgst -c "sha256" --hex < $ORIGPT > $GENDGST
+	eval run_app kcapi-dgst -c "sha256" --hex $op_in $ORIGPT $op_out $GENDGST
 	echo >> $GENDGST
 	openssl dgst -sha256 $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "STDIN / STDOUT test (hash)"
+	diff_file $GENDGST $GENDGST.openssl "$name test (hash)"
 
 	local keysize=$(stat -c %s $keyfile)
 	keysize=$((keysize*8))
 	eval opensslkey=\$OPENSSLKEY${keysize}
 
-	exec 10<$keyfile; run_app kcapi-dgst --keyfd 10 -c "hmac(sha256)" --hex < $ORIGPT  > $GENDGST
+	local args_common='-c "hmac(sha256)"'
+	local args_keyfile='--keyfd 10 10<$keyfile'
+	local args_password='-q --pbkdfiter 1000 -p "passwd" -s $SALT'
+
+	eval run_app kcapi-dgst $args_common $args_keyfile --hex $op_in $ORIGPT $op_out $GENDGST
 	echo >> $GENDGST
 	openssl dgst -sha256 -hmac $opensslkey $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "STDIN / STDOUT test (keyed MD $keysize bits)"
+	diff_file $GENDGST $GENDGST.openssl "$name test (keyed MD $keysize bits)"
 
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" < $ORIGPT > $GENDGST
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" < $ORIGPT > $GENDGST.2
+	eval run_app kcapi-dgst $args_common $args_password $op_in $ORIGPT $op_out $GENDGST
+	eval run_app kcapi-dgst $args_common $args_password $op_in $ORIGPT $op_out $GENDGST.2
 
-	diff_file $GENDGST $GENDGST.2 "STDIN / STDOUT test (password)"
+	diff_file $GENDGST $GENDGST.2 "$name test (password)"
+
+	[ -n "$TEST_KEYRING" ] || return 0
+
+	for key_type in logon user; do
+		eval keydesc=\"\$KEYDESC_${keysize}\"
+
+		keydesc="$key_type:${keydesc}_$key_type"
+		eval run_app kcapi-dgst $args_common --keydesc "$keydesc" --hex $op_in $ORIGPT $op_out $GENDGST
+		echo >> $GENDGST
+
+		diff_file $GENDGST $GENDGST.openssl "$name test (keyring $key_type)"
+	done
+}
+
+test_stdin_stdout()
+{
+	test_common $1 "STDIN / STDOUT" '<' '>'
 }
 
 test_stdin_fileout()
 {
-	local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	run_app kcapi-dgst -c "sha256" --hex -o $GENDGST < $ORIGPT
-	echo >> $GENDGST
-	openssl dgst -sha256 $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "STDIN / FILEOUT test (hash)"
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-	eval opensslkey=\$OPENSSLKEY${keysize}
-
-	exec 10<$keyfile; run_app kcapi-dgst --keyfd 10 -c "hmac(sha256)" --hex -o $GENDGST < $ORIGPT
-	echo >> $GENDGST
-	openssl dgst -sha256 -hmac $opensslkey $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "STDIN / FILEOUT test (keyed MD $keysize bits)"
-
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" -o $GENDGST < $ORIGPT
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" -o $GENDGST.2 < $ORIGPT
-
-	diff_file $GENDGST $GENDGST.2 "STDIN / FILEOUT test (password)"
+	test_common $1 "STDIN / FILEOUT" '<' '-o'
 }
 
 test_filein_stdout()
 {
-	local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	run_app kcapi-dgst -c "sha256" --hex -i $ORIGPT > $GENDGST
-	echo >> $GENDGST
-	openssl dgst -sha256 $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "FILEIN / STDOUT test (hash)"
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-	eval opensslkey=\$OPENSSLKEY${keysize}
-
-	exec 10<$keyfile; run_app kcapi-dgst --keyfd 10 -c "hmac(sha256)" --hex -i $ORIGPT > $GENDGST
-	echo >> $GENDGST
-	openssl dgst -sha256 -hmac $opensslkey $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "FILEIN / STDOUT test (keyed MD $keysize bits)"
-
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" -i $ORIGPT > $GENDGST
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)"  -i $ORIGPT > $GENDGST.2
-
-	diff_file $GENDGST $GENDGST.2 "FILEIN / STDOUT test (password)"
+	test_common $1 "FILEIN / STDOUT" '-i' '>'
 }
 
 test_filein_fileout()
 {
-	local keyfile=$1
-
-		local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	run_app kcapi-dgst -c "sha256" --hex -i $ORIGPT -o $GENDGST
-	echo >> $GENDGST
-	openssl dgst -sha256 $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "FILEIN / FILEOUT test (hash)"
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-	eval opensslkey=\$OPENSSLKEY${keysize}
-
-	exec 10<$keyfile; run_app kcapi-dgst --keyfd 10 -c "hmac(sha256)" --hex -i $ORIGPT -o $GENDGST
-	echo >> $GENDGST
-	openssl dgst -sha256 -hmac $opensslkey $ORIGPT  | awk 'BEGIN {FS="= "} {print $2}' > $GENDGST.openssl
-	diff_file $GENDGST $GENDGST.openssl "FILEIN / FILEOUT test (keyed MD $keysize bits)"
-
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)" -i $ORIGPT -o $GENDGST
-	run_app kcapi-dgst -q --pbkdfiter 1000 -p "passwd" -s $SALT -c "hmac(sha256)"  -i $ORIGPT -o $GENDGST.2
-
-	diff_file $GENDGST $GENDGST.2 "FILEIN / FILEOUT test (password)"
+	test_common $1 "FILEIN / FILEOUT" '-i' '-o'
 }
 
 init_setup

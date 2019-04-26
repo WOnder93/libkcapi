@@ -51,6 +51,16 @@ GCM_AAD="0f7479e28c53d120fcf57a525e0b36a0"
 GCM_TAGLEN="14"
 GCM_EXP="e80e074e70b089c160c6d3863e8d2b75ac767d2d44412252eed41a220f31"
 
+# Keyring
+TEST_KEYRING_NAME="kcapi:libkcapi_test_keyring"
+TEST_KEYRING=""
+
+KEYDESC_AES128="${TEST_KEYRING_NAME}_aes128"
+KEYDESC_AES256="${TEST_KEYRING_NAME}_aes256"
+KEYDESC_CCM="${TEST_KEYRING_NAME}_ccm"
+KEYDESC_GCM="${TEST_KEYRING_NAME}_gcm"
+
+
 failures=0
 
 hex2bin()
@@ -93,9 +103,42 @@ echo_fail_local()
 	fi
 }
 
+load_key()
+{
+	local type="$1"; shift
+	local desc="$1"; shift
+	local key
+
+	key=$(keyctl padd "$type" "${desc}_$type" "$TEST_KEYRING") || return 1
+	keyctl setperm $key 0x3f000000 || return 1
+}
+
+test_and_prepare_keyring()
+{
+	keyctl list "@s" > /dev/null || return 1
+	TEST_KEYRING="$(keyctl newring "$TEST_KEYRING_NAME" "@u" 2> /dev/null)"
+	test -n "$TEST_KEYRING" || return 1
+	keyctl search "@s" keyring "$TEST_KEYRING" > /dev/null 2>&1 || \
+		keyctl link "@u" "@s" > /dev/null 2>&1
+
+	for key_type in logon user; do
+		load_key $key_type "$KEYDESC_AES128" <"$KEYFILE_AES128" || return 1
+		load_key $key_type "$KEYDESC_AES256" <"$KEYFILE_AES256" || return 1
+		load_key $key_type "$KEYDESC_CCM" <"${TSTPREFIX}ccm_key" || return 1
+		load_key $key_type "$KEYDESC_GCM" <"${TSTPREFIX}gcm_key" || return 1
+	done
+}
+
+cleanup()
+{
+	rm -f $TSTPREFIX*
+	# unlink whole test keyring
+	[ -n "$TEST_KEYRING" ] && keyctl unlink "$TEST_KEYRING" "@u" >/dev/null
+}
+
 init_setup()
 {
-	trap "rm -f $TSTPREFIX*; exit" 0 1 2 3 15
+	trap "cleanup; exit" 0 1 2 3 15
 
 	# CR is also character
 	# Hex key string: 3031323334353637383961626364650a
@@ -109,6 +152,10 @@ init_setup()
 	hex2bin $CCM_KEY ${TSTPREFIX}ccm_key
 	hex2bin $GCM_MSG ${TSTPREFIX}gcm_msg
 	hex2bin $GCM_KEY ${TSTPREFIX}gcm_key
+
+	if ! test_and_prepare_keyring; then
+		echo_deact "Keyring tests (not supported)"
+	fi
 }
 
 gen_orig()
@@ -137,10 +184,13 @@ diff_file()
 
 }
 
-# Do not test CBC as padding is not removed
-test_stdin_stdout()
+test_common()
 {
-	local keyfile=$1
+	local keyfile="$1"; shift
+	local name="$1"; shift
+	local mode="$1"; shift
+	local args_enc="$1"; shift
+	local args_dec="$1"; shift
 
 	if [ ! -f "$keyfile" ]
 	then
@@ -151,152 +201,108 @@ test_stdin_stdout()
 	local keysize=$(stat -c %s $keyfile)
 	keysize=$((keysize*8))
 
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -e -c "ctr(aes)" --iv $IV < $ORIGPT  > $GENCT
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -d -c "ctr(aes)" --iv $IV < $GENCT > $GENPT
+	local args_common='-c "$mode(aes)" --iv $IV'
+	local args_keyfile='--keyfd 10 10<$keyfile'
+	local args_password='-q --pbkdfiter 1000 -p "passwd" -s $IV'
 
-	diff_file $ORIGPT $GENPT "STDIN / STDOUT enc test ($keysize bits)"
+	eval run_app kcapi-enc $args_common $args_keyfile -e $args_enc
+	eval run_app kcapi-enc $args_common $args_keyfile -d $args_dec
 
-	eval opensslkey=\$OPENSSLKEY${keysize}
-	openssl enc -aes-$keysize-ctr -in $ORIGPT -out $GENCT.openssl -K $opensslkey -iv $IV
-	openssl enc -d -aes-$keysize-ctr -in $GENCT -out $GENPT.openssl -K $opensslkey -iv $IV
-
-	diff_file $GENCT $GENCT.openssl "STDIN / STDOUT enc test ($keysize bits) (openssl generated CT)"
-	diff_file $GENPT $GENPT.openssl "STDIN / STDOUT enc test ($keysize bits) (openssl generated PT)"
-
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -e -c "ctr(aes)" --iv $IV < $ORIGPT > $GENCT
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -d -c "ctr(aes)" --iv $IV < $GENCT > $GENPT
-
-	diff_file $ORIGPT $GENPT "STDIN / STDOUT enc test (password)"
-}
-
-# Do not test CBC as padding is not removed
-test_stdin_fileout()
-{
-	local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -e -c "ctr(aes)" --iv $IV -o $GENCT < $ORIGPT
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -d -c "ctr(aes)" --iv $IV -o $GENPT < $GENCT
-
-	diff_file $ORIGPT $GENPT "STDIN / FILEOUT test ($keysize bits)"
-
-	eval opensslkey=\$OPENSSLKEY${keysize}
-	openssl enc -aes-$keysize-ctr -in $ORIGPT -out $GENCT.openssl -K $opensslkey -iv $IV
-	openssl enc -d -aes-$keysize-ctr -in $GENCT -out $GENPT.openssl -K $opensslkey -iv $IV
-
-	diff_file $GENCT $GENCT.openssl "STDIN / FILEOUT enc test ($keysize bits) (openssl generated CT)"
-	diff_file $GENPT $GENPT.openssl "STDIN / FILEOUT enc test ($keysize bits) (openssl generated PT)"
-
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -e -c "ctr(aes)" --iv $IV -o $GENCT < $ORIGPT
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -d -c "ctr(aes)" --iv $IV -o $GENPT < $GENCT
-
-	diff_file $ORIGPT $GENPT "STDIN / FILEOUT enc test (password)"
-}
-
-# Do not test CBC as padding is not removed
-test_filein_stdout()
-{
-	local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -e -c "ctr(aes)" --iv $IV -i $ORIGPT > $GENCT
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -d -c "ctr(aes)" --iv $IV -i $GENCT > $GENPT
-
-	diff_file $ORIGPT $GENPT "FILEIN / STDOUT enc test ($keysize bits)"
-
-	eval opensslkey=\$OPENSSLKEY${keysize}
-	openssl enc -aes-$keysize-ctr -in $ORIGPT -out $GENCT.openssl -K $opensslkey -iv $IV
-	openssl enc -d -aes-$keysize-ctr -in $GENCT -out $GENPT.openssl -K $opensslkey -iv $IV
-
-	diff_file $GENCT $GENCT.openssl "FILEIN / STDOUT enc test ($keysize bits) (openssl generated CT)"
-	diff_file $GENPT $GENPT.openssl "FILEIN / STDOUT enc test ($keysize bits) (openssl generated PT)"
-
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -e -c "ctr(aes)" --iv $IV -i $ORIGPT > $GENCT
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s $IV -d -c "ctr(aes)" --iv $IV -i $GENCT > $GENPT
-
-	diff_file $ORIGPT $GENPT "FILEIN / STDOUT enc test (password)"
-}
-
-# Use cipher with padding requirement
-test_filein_fileout()
-{
-	local keyfile=$1
-
-	if [ ! -f "$keyfile" ]
-	then
-		echo "Keyfile $file does not exist"
-		exit 1
-	fi
-
-	local keysize=$(stat -c %s $keyfile)
-	keysize=$((keysize*8))
-
-
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -e -c "cbc(aes)" --iv $IV -i $ORIGPT -o $GENCT
-	exec 10<$keyfile; run_app kcapi-enc --keyfd 10 -d -c "cbc(aes)" --iv $IV -i $GENCT -o $GENPT
-
-	diff_file $ORIGPT $GENPT "FILEIN / FILEOUT enc test ($keysize bits)"
+	diff_file $ORIGPT $GENPT "$name enc test ($keysize bits)"
 
 	# FIXME: error in openssl?
 	local ptsize=$(stat -c %s $ORIGPT)
 	local fullblock=$((ptsize%16))
 
-	if [ $fullblock -eq 0 ]
+	if [ "$mode" != "cbc" ] || [ $fullblock -ne 0 ]
 	then
-		return
+		eval opensslkey=\$OPENSSLKEY${keysize}
+		openssl enc    -aes-$keysize-$mode -in $ORIGPT \
+			-out $GENCT.openssl -K $opensslkey -iv $IV
+		openssl enc -d -aes-$keysize-$mode -in $GENCT \
+			-out $GENPT.openssl -K $opensslkey -iv $IV
+
+		diff_file $GENCT $GENCT.openssl \
+			"$name enc test ($keysize bits) (openssl generated CT)"
+		diff_file $GENPT $GENPT.openssl \
+			"$name enc test ($keysize bits) (openssl generated PT)"
 	fi
 
-	eval opensslkey=\$OPENSSLKEY${keysize}
-	openssl enc -aes-$keysize-cbc -in $ORIGPT -out $GENCT.openssl -K $opensslkey -iv $IV
-	openssl enc -d -aes-$keysize-cbc -in $GENCT -out $GENPT.openssl -K $opensslkey -iv $IV
+	eval run_app kcapi-enc $args_common $args_password -e $args_enc
+	eval run_app kcapi-enc $args_common $args_password -d $args_dec
 
-	diff_file $GENCT $GENCT.openssl "FILEIN / FILEOUT enc test ($keysize bits) (openssl generated CT)"
-	diff_file $GENPT $GENPT.openssl "FILEIN / FILEOUT enc test ($keysize bits) (openssl generated PT)"
+	diff_file $ORIGPT $GENPT "$name enc test (password)"
 
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s "123" -e -c "cbc(aes)" --iv $IV -i $ORIGPT -o $GENCT
-	run_app kcapi-enc -q --pbkdfiter 1000 -p "passwd" -s "123" -d -c "cbc(aes)" --iv $IV -i $GENCT -o $GENPT
+	[ -n "$TEST_KEYRING" ] || return 0
 
-	diff_file $ORIGPT $GENPT "FILEIN / FILEOUT enc test (password)"
+	for key_type in logon user; do
+		eval keydesc=\"\$KEYDESC_AES${keysize}\"
+
+		keydesc="$key_type:${keydesc}_$key_type"
+		eval run_app kcapi-enc $args_common --keydesc "$keydesc" -e $args_enc
+		eval run_app kcapi-enc $args_common --keydesc "$keydesc" -d $args_dec
+
+		diff_file $ORIGPT $GENPT "$name enc test (keyring $key_type)"
+
+		if [ "$mode" != "cbc" ] || [ $fullblock -ne 0 ]
+		then
+			diff_file $GENCT $GENCT.openssl \
+				"$name enc test (keyring $key_type) (openssl generated CT)"
+			diff_file $GENPT $GENPT.openssl \
+				"$name enc test (keyring $key_type) (openssl generated PT)"
+		fi
+	done
+}
+
+# Do not test CBC as padding is not removed
+test_stdin_stdout()
+{
+	test_common $1 "STDIN / STDOUT" "ctr" '<$ORIGPT >$GENCT' '<$GENCT >$GENPT'
+}
+
+# Do not test CBC as padding is not removed
+test_stdin_fileout()
+{
+	test_common $1 "STDIN / FILEOUT" "ctr" '<$ORIGPT -o $GENCT' '<$GENCT -o $GENPT'
+}
+
+# Do not test CBC as padding is not removed
+test_filein_stdout()
+{
+	test_common $1 "FILEIN / STDOUT" "ctr" '-i $ORIGPT >$GENCT' '-i $GENCT >$GENPT'
+}
+
+# Use cipher with padding requirement
+test_filein_fileout()
+{
+	test_common $1 "FILEIN / FILEOUT" "cbc" '-i $ORIGPT -o $GENCT' '-i $GENCT -o $GENPT'
 }
 
 test_ccm_dec()
 {
+	local name="$1"; shift
+	local args_key="$1"; shift
+
 	local aadlen=${#CCM_AAD}
 
 	aadlen=$(($aadlen/2))
 
-	exec 10<${TSTPREFIX}ccm_key; run_app kcapi-enc --keyfd 10 -d -c "ccm(aes)" -i ${TSTPREFIX}ccm_msg -o ${TSTPREFIX}ccm_out --ccm-nonce $CCM_NONCE --aad $CCM_AAD --tag $CCM_TAG
+	eval run_app kcapi-enc $args_key -d -c \''ccm(aes)'\' -i ${TSTPREFIX}ccm_msg -o ${TSTPREFIX}ccm_out --ccm-nonce $CCM_NONCE --aad $CCM_AAD --tag $CCM_TAG
 	local hexret=$(bin2hex_noaad ${TSTPREFIX}ccm_out $aadlen)
 
 	if [ x"$hexret" != x"$CCM_EXP" ]
 	then
 		echo_fail_local "CCM output does not match expected output (received: $hexret -- expected $CCM_EXP)"
 	else
-		echo_pass_local "FILEIN / FILEOUT CCM decrypt"
+		echo_pass_local "FILEIN / FILEOUT CCM decrypt ($name)"
 	fi
 
-	exec 10<${TSTPREFIX}ccm_key; run_app kcapi-enc --keyfd 10 -d -c "ccm(aes)" -i ${TSTPREFIX}ccm_msg -o ${TSTPREFIX}ccm_out --ccm-nonce $CCM_NONCE --aad $CCM_AAD --tag $CCM_TAG_FAIL -q
+	eval run_app kcapi-enc $args_key -d -c \''ccm(aes)'\' -i ${TSTPREFIX}ccm_msg -o ${TSTPREFIX}ccm_out --ccm-nonce $CCM_NONCE --aad $CCM_AAD --tag $CCM_TAG_FAIL -q
 
 	# 182 == -EBADMSG
 	if [ $? -eq 182 ]
 	then
-		echo_pass_local "FILEIN / FILEOUT CCM decrypt integrity violation"
+		echo_pass_local "FILEIN / FILEOUT CCM decrypt integrity violation ($name)"
 	else
 		echo_fail_local "CCM integrity violation not caught"
 	fi
@@ -304,24 +310,33 @@ test_ccm_dec()
 
 test_gcm_enc()
 {
+	local name="$1"; shift
+	local args_key="$1"; shift
+
 	local aadlen=${#GCM_AAD}
 
 	aadlen=$(($aadlen/2))
 
-	exec 10<${TSTPREFIX}gcm_key; run_app kcapi-enc --keyfd 10 -e -c "gcm(aes)" -i ${TSTPREFIX}gcm_msg -o ${TSTPREFIX}gcm_out --iv $GCM_IV --aad $GCM_AAD --taglen $GCM_TAGLEN
+	eval run_app kcapi-enc $args_key -e -c \''gcm(aes)'\' -i ${TSTPREFIX}gcm_msg -o ${TSTPREFIX}gcm_out --iv $GCM_IV --aad $GCM_AAD --taglen $GCM_TAGLEN
 	local hexret=$(bin2hex_noaad ${TSTPREFIX}gcm_out $aadlen)
 
 	if [ x"$hexret" != x"$GCM_EXP" ]
 	then
 		echo_fail_local "GCM output does not match expected output (received: $hexret -- expected $GCM_EXP)"
 	else
-		echo_pass_local "FILEIN / FILEOUT GCM encrypt"
+		echo_pass_local "FILEIN / FILEOUT GCM encrypt ($name)"
 	fi
 }
 
 init_setup
-test_gcm_enc
-test_ccm_dec
+test_gcm_enc 'keyfile' '--keyfd 10 10<${TSTPREFIX}gcm_key'
+test_ccm_dec 'keyfile' '--keyfd 10 10<${TSTPREFIX}ccm_key'
+
+[ -n "$TEST_KEYRING" ] && for type in logon user
+do
+	test_gcm_enc "keyring $type" '--keydesc '"$type"':${KEYDESC_GCM}_'"$type"
+	test_ccm_dec "keyring $type" '--keydesc '"$type"':${KEYDESC_CCM}_'"$type"
+done
 
 for i in 1 15 16 29 32 257 512 1023 16385 65535 65536 65537 99999 100000 100001
 do
