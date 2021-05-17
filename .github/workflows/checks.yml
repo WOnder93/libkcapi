@@ -68,13 +68,13 @@ jobs:
         strategy:
             matrix:
                 cc: [clang, gcc]
-            image:
-                # test on Fedora Rawhide
-                - fedora:rawhide
-                # test on the latest stable release of Fedora
-                - fedora:latest
-                # test on the stable release of Centos 8
-                - centos:centos8
+                image:
+                    # test on Fedora Rawhide
+                    - fedora:rawhide
+                    # test on the latest stable release of Fedora
+                    - fedora:latest
+                    # test on the stable release of Centos 8
+                    - centos:centos8
         container:
             image: ${{ matrix.image }}
         steps:
