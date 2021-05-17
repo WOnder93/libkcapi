@@ -85,6 +85,7 @@ jobs:
                 cppcheck \
                 diffutils \
                 docbook-utils-pdf \
+                glibc-devel.i686 \
                 libtool \
                 make \
                 openssl \
