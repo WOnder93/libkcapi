@@ -63,3 +63,50 @@ jobs:
           run: make scan
         - name: Run tests
           run: cd test && bash ./test-invocation.sh
+    build-fedora:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                cc: [clang, gcc]
+            image:
+                # test on Fedora Rawhide
+                - fedora:rawhide
+                # test on the latest stable release of Fedora
+                - fedora:latest
+                # test on the stable release of Centos 8
+                - centos:centos8
+        container:
+            image: ${{ matrix.image }}
+        steps:
+        - uses: actions/checkout@v2
+        - name: Install dependencies
+          run: |
+            dnf install -y \
+                cppcheck \
+                docbook-utils \
+                libtool \
+                make \
+                openssl \
+                perl-interpreter \
+                xmlto \
+                clang \
+                ${{ matrix.cc }}
+        - name: Configure build
+          run: |
+            autoreconf -i
+            ./configure \
+                --enable-kcapi-hasher \
+                --enable-kcapi-test \
+                --enable-kcapi-rngapp \
+                --enable-kcapi-encapp \
+                --enable-kcapi-dgstapp \
+                --enable-lib-asym \
+                --enable-lib-kpp
+        - name: Run build
+          run: make -j$(nproc)
+        - name: Run cppcheck
+          run: make cppcheck
+        - name: Run CLang static analysis
+          run: make scan
+        - name: Run tests
+          run: cd test && bash ./test-invocation.sh
