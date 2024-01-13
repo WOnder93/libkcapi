@@ -79,7 +79,7 @@ jobs:
                 --enable-lib-asym \
                 --enable-lib-kpp
         - name: Run build
-          run: make -j$(nproc)
+          run: make -j$(nproc) all doc
         - name: Run install
           run: sudo make install
         - name: Check installed binaries FIPS self-checks
