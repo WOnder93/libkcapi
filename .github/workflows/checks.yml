@@ -66,6 +66,7 @@ jobs:
                 ${{ matrix.compiler.cc }}
             echo "CC=${{ matrix.compiler.cc }}" >> $GITHUB_ENV
             echo "${{ matrix.compiler.env }}" >> $GITHUB_ENV
+            cat /usr/share/sgml/docbook/xml-dtd-4.5/ent/isogrk4.ent
         - name: Configure build
           run: |
             autoreconf -i
